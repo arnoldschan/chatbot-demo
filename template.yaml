@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Chatbot Echo demo
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals: #shared configuration
+  Function:
+    Timeout: 3 
+  Api:
+    OpenApiVersion: 3.0.1 ### to remove the stage name deployment bug
+Parameters: #shared parameters
+  StageName: # version staging config
+      Default: 'prod'
+      Type: String
+Resources: #AWS services list
+  EchobotAPI: # API Gateway https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-api.html
+    Type: AWS::Serverless::Api
+    Properties:
+      EndpointConfiguration: REGIONAL
+      StageName: !Ref StageName
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: "EchobotAPI"
+        schemes:
+        - "https"
+        paths:
+          /:
+            post:
+              produces:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                uri:
+                  Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ChatbotFunction.Arn}/invocations 
+                responses:
+                  default:
+                    statusCode: "200"
+                passthroughBehavior: "when_no_match"
+                httpMethod: "POST"
+                contentHandling: "CONVERT_TO_TEXT"
+                type: "aws_proxy"
+        definitions:
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+  DynamoDBTable: #DynamoDB Table https://docs.aws.amazon.com/lambda/latest/dg/kinesis-tutorial-spec.html
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: echobot #change to your table name
+      AttributeDefinitions:
+        - AttributeName: userID #change to db primary key and type
+          AttributeType: S
+        - AttributeName: timestamp #change to db secondary key and type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userID #change to db primary key
+          KeyType: HASH
+        - AttributeName: timestamp #change to db primary key
+          KeyType: RANGE
+      ProvisionedThroughput: 
+        ReadCapacityUnits: 1 
+        WriteCapacityUnits: 1
+
+
+  ChatbotFunction: # Lambda Function https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Type: AWS::Serverless::Function 
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Events: 
+        endpoint:
+          Type: Api
+          Properties: #connect to our API Gateway
+            RestApiId: !Ref EchobotAPI
+            Path: /
+            Method: Post
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: #only allowed to put record
+                - dynamodb:Put
+              Resource: !GetAtt DynamoDBTable.Arn
